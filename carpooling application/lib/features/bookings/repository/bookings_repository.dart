@@ -80,6 +80,19 @@ class BookingsRepository {
     return BookingModel.fromJson(data['booking']);
   }
 
+  Future<BookingModel> authorizeWalletPayment(String bookingId, String password) async {
+    final res = await http
+        .post(
+          Uri.parse('${AppConstants.baseUrl}/bookings/$bookingId/authorize-wallet'),
+          headers: await _headers,
+          body: jsonEncode({'password': password}),
+        )
+        .timeout(const Duration(seconds: 15));
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    if (res.statusCode != 200) throw Exception(data['message'] ?? 'Could not authorize wallet payment');
+    return BookingModel.fromJson(data['booking']);
+  }
+
   Future<BookingModel> confirmPayment(String bookingId) async {
     final res = await http
         .post(Uri.parse('${AppConstants.baseUrl}/bookings/$bookingId/confirm-payment'), headers: await _headers)

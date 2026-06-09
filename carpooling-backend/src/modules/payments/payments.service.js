@@ -5,13 +5,6 @@ const toAmount = (value) => {
   return Number.isFinite(amount) && amount > 0 ? Number(amount.toFixed(2)) : null;
 };
 
-const ensurePaymentsSchema = async () => {
-  await pool.query(`
-    ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS qr_payment_image_url TEXT
-  `);
-};
-
 const walletSelect = `
   w.id,
   w.user_id,
@@ -163,7 +156,6 @@ const adminCreditWallet = async ({ email, userId, amount: amountInput, descripti
 };
 
 const updateDriverQr = async (userId, input) => {
-  await ensurePaymentsSchema();
   const { qrPaymentId, qrPaymentLabel, qrPaymentImageUrl } = input;
   const { rows } = await pool.query(
     `UPDATE users

@@ -29,6 +29,10 @@ const submitQrPayment = wrap(async (req, res) => {
   res.json({ booking: await service.submitQrPayment(req.user.id, req.params.id, req.body.screenshotUrl) });
 });
 
+const authorizeWalletPayment = wrap(async (req, res) => {
+  res.json({ booking: await service.authorizeWalletPayment(req.user.id, req.params.id, req.body.password) });
+});
+
 const confirmPayment = wrap(async (req, res) => {
   res.json({ booking: await service.confirmPaymentReceived(req.user.id, req.params.id) });
 });
@@ -39,5 +43,6 @@ module.exports = {
   driverBookings,
   updateStatus,
   submitQrPayment,
+  authorizeWalletPayment,
   confirmPayment,
 };

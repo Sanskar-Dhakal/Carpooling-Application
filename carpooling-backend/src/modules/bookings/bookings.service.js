@@ -1,22 +1,10 @@
 const pool = require('../../config/database');
+const bcrypt = require('bcryptjs');
 const { sendPush } = require('../notifications/notification.service');
 
 const toInt = (value) => {
   const n = parseInt(value, 10);
   return Number.isFinite(n) ? n : null;
-};
-
-const ensureBookingSchema = async () => {
-  await pool.query(`
-    ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS qr_payment_image_url TEXT
-  `);
-  await pool.query(`
-    ALTER TABLE bookings
-      DROP CONSTRAINT IF EXISTS bookings_status_check,
-      ADD CONSTRAINT bookings_status_check
-        CHECK (status IN ('pending','confirmed','rejected','cancelled','completed'))
-  `);
 };
 
 const bookingSelect = `
@@ -119,9 +107,10 @@ const settleWalletBookingsForRide = async (rideId, client = pool) => {
      FROM bookings b
      JOIN rides r ON r.id = b.ride_id
      WHERE b.ride_id = $1
-       AND b.status = 'confirmed'
+       AND r.status = 'completed'
+       AND b.status = 'completed'
        AND b.payment_method = 'wallet'
-       AND b.payment_status <> 'settled'
+       AND b.payment_status = 'passenger_confirmed'
      FOR UPDATE OF b`,
     [rideId],
   );
@@ -155,8 +144,49 @@ const settleWalletBookingsForRide = async (rideId, client = pool) => {
   }
 };
 
+const releaseWalletReservationsForRide = async (rideId, client = pool, description = 'Ride cancelled') => {
+  const { rows } = await client.query(
+    `SELECT * FROM bookings
+     WHERE ride_id = $1
+       AND payment_method = 'wallet'
+       AND payment_status <> 'settled'
+       AND status IN ('pending','confirmed','completed')
+     FOR UPDATE`,
+    [rideId],
+  );
+
+  for (const row of rows) {
+    const walletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [row.passenger_id]);
+    const wallet = walletRes.rows[0];
+    if (!wallet) continue;
+    await client.query(
+      `UPDATE wallets
+       SET balance = balance + $1,
+           reserved = GREATEST(reserved - $1, 0),
+           updated_at = NOW()
+       WHERE id = $2`,
+      [row.total_amount, wallet.id],
+    );
+    await client.query(
+      `INSERT INTO wallet_transactions (wallet_id, type, amount, description, ride_id)
+       VALUES ($1, 'release', $2, $3, $4)`,
+      [wallet.id, row.total_amount, description, row.ride_id],
+    );
+  }
+
+  await client.query(
+    `UPDATE bookings
+     SET status = 'cancelled',
+         payment_status = CASE WHEN payment_status = 'settled' THEN payment_status ELSE 'pending' END,
+         updated_at = NOW()
+     WHERE ride_id = $1
+       AND status IN ('pending','confirmed','completed')
+       AND payment_status <> 'settled'`,
+    [rideId],
+  );
+};
+
 const createBooking = async (passengerId, input) => {
-  await ensureBookingSchema();
   const seatsBooked = toInt(input.seatsBooked ?? input.seats);
   const paymentMethod = input.paymentMethod || 'cash';
   if (!input.rideId || !seatsBooked || seatsBooked < 1 || !['wallet', 'qr', 'cash'].includes(paymentMethod)) {
@@ -183,10 +213,10 @@ const createBooking = async (passengerId, input) => {
 
     const existing = await client.query(
       `SELECT id FROM bookings
-       WHERE ride_id = $1 AND passenger_id = $2 AND status IN ('pending','confirmed')`,
+       WHERE ride_id = $1 AND passenger_id = $2`,
       [input.rideId, passengerId],
     );
-    if (existing.rows.length) throw { status: 409, message: 'You already have an active booking for this ride' };
+    if (existing.rows.length) throw { status: 409, message: 'You already have a booking for this ride' };
 
     const totalAmount = Number(ride.price_per_seat) * seatsBooked;
 
@@ -213,7 +243,7 @@ const createBooking = async (passengerId, input) => {
       `INSERT INTO bookings (ride_id, passenger_id, seats_booked, total_amount, payment_method, payment_status)
        VALUES ($1,$2,$3,$4,$5,$6)
        RETURNING *`,
-      [input.rideId, passengerId, seatsBooked, totalAmount, paymentMethod, paymentMethod === 'wallet' ? 'passenger_confirmed' : 'pending'],
+      [input.rideId, passengerId, seatsBooked, totalAmount, paymentMethod, 'pending'],
     );
     bookingRow = bookingRes.rows[0];
     await client.query('COMMIT');
@@ -226,6 +256,9 @@ const createBooking = async (passengerId, input) => {
     });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.code === '23505' && err.constraint === 'uq_bookings_ride_passenger') {
+      throw { status: 409, message: 'You already have a booking for this ride' };
+    }
     throw err;
   } finally {
     client.release();
@@ -235,7 +268,6 @@ const createBooking = async (passengerId, input) => {
 };
 
 const getPassengerBookings = async (passengerId) => {
-  await ensureBookingSchema();
   const { rows } = await pool.query(
     `SELECT ${bookingSelect}
      FROM bookings b
@@ -250,7 +282,6 @@ const getPassengerBookings = async (passengerId) => {
 };
 
 const getDriverBookings = async (driverId) => {
-  await ensureBookingSchema();
   const { rows } = await pool.query(
     `SELECT ${bookingSelect}
      FROM bookings b
@@ -265,7 +296,6 @@ const getDriverBookings = async (driverId) => {
 };
 
 const updateBookingStatus = async (driverId, bookingId, status) => {
-  await ensureBookingSchema();
   if (!['confirmed', 'rejected'].includes(status)) {
     throw { status: 400, message: 'Status must be confirmed or rejected' };
   }
@@ -310,7 +340,7 @@ const updateBookingStatus = async (driverId, bookingId, status) => {
        SET status = $1, payment_status = CASE
          WHEN $2 = 'confirmed' AND payment_method = 'cash' THEN 'pending'
          WHEN $2 = 'confirmed' AND payment_method = 'qr' THEN 'pending'
-         WHEN $2 = 'confirmed' AND payment_method = 'wallet' THEN 'driver_confirmed'
+         WHEN $2 = 'confirmed' AND payment_method = 'wallet' THEN 'pending'
          ELSE payment_status
        END,
        updated_at = NOW()
@@ -334,6 +364,43 @@ const updateBookingStatus = async (driverId, bookingId, status) => {
   }
 
   return rowToBooking(await fetchBooking(bookingId));
+};
+
+const authorizeWalletPayment = async (passengerId, bookingId, password) => {
+  if (!password) throw { status: 400, message: 'Password is required to authorize wallet payment' };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const row = await fetchBooking(bookingId, client);
+    if (row.passenger_id !== passengerId) throw { status: 403, message: 'Only the passenger can authorize this payment' };
+    if (row.payment_method !== 'wallet') throw { status: 400, message: 'This booking is not a wallet payment' };
+    if (row.status !== 'completed') {
+      throw { status: 400, message: 'Ride must be completed before wallet payment authorization' };
+    }
+    if (row.payment_status === 'settled') throw { status: 400, message: 'Payment is already settled' };
+
+    const userRes = await client.query('SELECT password_hash FROM users WHERE id = $1', [passengerId]);
+    const ok = await bcrypt.compare(password, userRes.rows[0]?.password_hash || '');
+    if (!ok) throw { status: 401, message: 'Incorrect password' };
+
+    await client.query(
+      `UPDATE bookings
+       SET payment_status = 'passenger_confirmed',
+           payment_confirmed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [bookingId],
+    );
+    await settleWalletBookingsForRide(row.ride_id, client);
+    await client.query('COMMIT');
+    return rowToBooking(await fetchBooking(bookingId));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 };
 
 const submitQrPayment = async (passengerId, bookingId, screenshotUrl) => {
@@ -399,7 +466,9 @@ module.exports = {
   getPassengerBookings,
   getDriverBookings,
   updateBookingStatus,
+  authorizeWalletPayment,
   submitQrPayment,
   confirmPaymentReceived,
   settleWalletBookingsForRide,
+  releaseWalletReservationsForRide,
 };

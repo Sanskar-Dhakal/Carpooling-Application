@@ -32,6 +32,44 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
     if (changed == true) _reload();
   }
 
+  Future<void> _authorizeWalletPayment(BookingModel booking) async {
+    final passwordCtrl = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Authorize Payment'),
+        content: TextField(
+          controller: passwordCtrl,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Account password',
+            prefixIcon: Icon(Icons.lock_rounded),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, passwordCtrl.text), child: const Text('Authorize')),
+        ],
+      ),
+    );
+    passwordCtrl.dispose();
+    if (password == null || password.trim().isEmpty) return;
+
+    setState(() => _busyId = booking.id);
+    try {
+      await _repo.authorizeWalletPayment(booking.id, password);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wallet payment authorized')));
+      _reload();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+    } finally {
+      if (mounted) setState(() => _busyId = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -56,6 +94,9 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
               final canPayQr = booking.paymentMethod == 'qr'
                   && ['confirmed', 'completed'].contains(booking.status)
                   && booking.paymentStatus != 'settled';
+              final canAuthorizeWallet = booking.paymentMethod == 'wallet'
+                  && booking.status == 'completed'
+                  && booking.paymentStatus != 'settled';
               return Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -75,7 +116,22 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                     ]),
                     if (booking.paymentMethod == 'wallet' && booking.paymentStatus != 'settled') ...[
                       const SizedBox(height: 10),
-                      const Text('Wallet payment is reserved and settles automatically when the ride completes.', style: TextStyle(color: AppTheme.textSecondary)),
+                      Text(
+                        booking.status == 'completed'
+                            ? 'Wallet amount is reserved. Enter your password to release it.'
+                            : 'Wallet amount is reserved. It will be released if the ride is cancelled.',
+                        style: const TextStyle(color: AppTheme.textSecondary),
+                      ),
+                    ],
+                    if (canAuthorizeWallet) ...[
+                      const SizedBox(height: 10),
+                      ElevatedButton.icon(
+                        onPressed: _busyId == booking.id ? null : () => _authorizeWalletPayment(booking),
+                        icon: _busyId == booking.id
+                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.lock_open_rounded),
+                        label: const Text('Authorize Wallet Payment'),
+                      ),
                     ],
                     if (booking.paymentMethod == 'cash' && booking.status == 'completed' && booking.paymentStatus != 'settled') ...[
                       const SizedBox(height: 10),

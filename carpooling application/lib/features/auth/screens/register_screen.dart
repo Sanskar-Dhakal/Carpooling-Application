@@ -116,7 +116,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   controller: _nameCtrl,
                   textCapitalization: TextCapitalization.words,
                   decoration: const InputDecoration(
-                    hintText: 'John Doe',
+                    hintText: 'Sandy Smith',
                     prefixIcon: Icon(Icons.person_outline),
                   ),
                   validator: (v) {

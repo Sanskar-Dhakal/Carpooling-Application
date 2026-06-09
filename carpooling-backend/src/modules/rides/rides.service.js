@@ -1,5 +1,8 @@
 const pool = require('../../config/database');
-const { settleWalletBookingsForRide } = require('../bookings/bookings.service');
+const {
+  settleWalletBookingsForRide,
+  releaseWalletReservationsForRide,
+} = require('../bookings/bookings.service');
 
 const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
 const NOMINATIM_URL = process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
@@ -111,16 +114,7 @@ const rowToRide = (row) => ({
   createdAt: row.created_at,
 });
 
-const ensureRideColumns = async () => {
-  await pool.query(`
-    ALTER TABLE rides
-      ADD COLUMN IF NOT EXISTS route_distance_m INTEGER DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS route_duration_s INTEGER DEFAULT 0
-  `);
-};
-
 const createRide = async (driverId, input) => {
-  await ensureRideColumns();
   const originLat = toNum(input.originLat ?? input.origin?.lat);
   const originLng = toNum(input.originLng ?? input.origin?.lng);
   const destinationLat = toNum(input.destinationLat ?? input.destination?.lat);
@@ -130,7 +124,7 @@ const createRide = async (driverId, input) => {
 
   if (!input.originAddress || !input.destinationAddress || originLat == null || originLng == null
     || destinationLat == null || destinationLng == null || !input.departureTime
-    || !seatsTotal || pricePerSeat == null) {
+    || !seatsTotal || seatsTotal < 1 || pricePerSeat == null || pricePerSeat < 0) {
     throw { status: 400, message: 'Origin, destination, departure time, seats, and price are required' };
   }
 
@@ -173,7 +167,6 @@ const rideSelect = `
 `;
 
 const getRide = async (id) => {
-  await ensureRideColumns();
   const { rows } = await pool.query(
     `SELECT ${rideSelect}
      FROM rides r JOIN users u ON u.id = r.driver_id
@@ -185,7 +178,6 @@ const getRide = async (id) => {
 };
 
 const getMyRides = async (driverId) => {
-  await ensureRideColumns();
   const { rows } = await pool.query(
     `SELECT ${rideSelect}
      FROM rides r JOIN users u ON u.id = r.driver_id
@@ -212,13 +204,15 @@ const updateStatus = async (driverId, rideId, status) => {
     );
     if (!rows.length) throw { status: 404, message: 'Ride not found' };
     if (status === 'completed') {
-      await settleWalletBookingsForRide(rideId, client);
       await client.query(
         `UPDATE bookings
          SET status = 'completed', updated_at = NOW()
          WHERE ride_id = $1 AND status = 'confirmed'`,
         [rideId],
       );
+      await settleWalletBookingsForRide(rideId, client);
+    } else if (status === 'cancelled') {
+      await releaseWalletReservationsForRide(rideId, client, 'Ride cancelled by driver');
     }
     await client.query('COMMIT');
     return rowToRide(rows[0]);
@@ -231,7 +225,6 @@ const updateStatus = async (driverId, rideId, status) => {
 };
 
 const searchRides = async (input) => {
-  await ensureRideColumns();
   const origin = { lat: toNum(input.originLat), lng: toNum(input.originLng) };
   const destination = { lat: toNum(input.destinationLat), lng: toNum(input.destinationLng) };
   if (origin.lat == null || origin.lng == null || destination.lat == null || destination.lng == null) {

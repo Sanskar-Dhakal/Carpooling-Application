@@ -33,7 +33,6 @@ router.put('/fcm-token', authenticate, async (req, res, next) => {
 router.put('/qr-payment', authenticate, async (req, res, next) => {
   try {
     const { qr_payment_id, qr_payment_label, qr_payment_image_url } = req.body;
-    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS qr_payment_image_url TEXT');
     await pool.query(
       'UPDATE users SET qr_payment_id=$1,qr_payment_label=$2,qr_payment_image_url=$3 WHERE id=$4',
       [qr_payment_id, qr_payment_label, qr_payment_image_url, req.user.id]
