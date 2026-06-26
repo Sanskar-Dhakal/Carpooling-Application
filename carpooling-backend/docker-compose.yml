@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vroomsquad_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-vroomsquad}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASS:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  redis:
+    image: redis:7-alpine
+    container_name: vroomsquad_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: vroomsquad_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console → http://localhost:9001
+    volumes:
+      - minio_data:/data
+
+  minio_init:
+    image: minio/mc:latest
+    container_name: vroomsquad_minio_init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        mc alias set local http://minio:9000 $${MINIO_ACCESS_KEY:-minioadmin} $${MINIO_SECRET_KEY:-minioadmin};
+        mc mb --ignore-existing local/profile-photos;
+        mc mb --ignore-existing local/id-documents;
+        mc mb --ignore-existing local/qr-payments;
+        mc mb --ignore-existing local/payment-proofs;
+        echo 'MinIO buckets ready';
+      "
+
+  carpooling:
+    build: .
+    container_name: carpooling
+    restart: unless-stopped
+    ports:
+      - "5000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-vroomsquad}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-vroom_squad_jwt_secret_change_in_prod}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-vroom_squad_refresh_secret_change_in_prod}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-your_gmail@gmail.com}
+      SMTP_PASS: ${SMTP_PASS:-your_app_password}
+      APP_URL: ${APP_URL:-http://localhost:5000}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-vroom-squad}
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
+volumes:
+  pg_data:
+  redis_data:
+  minio_data:
