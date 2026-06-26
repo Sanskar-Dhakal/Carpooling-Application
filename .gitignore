@@ -1,4 +1,28 @@
-# Firebase local files
+# ── Flutter additional ──────────────────────
+*.g.dart
+*.freezed.dart
+.flutter-plugins
+.flutter-plugins-dependencies
+.dart_tool/
+.packages
+pubspec.lock
+
+# ── Android ─────────────────────────────────
+android/.gradle/
+android/local.properties
+android/app/google-services.json
+android/key.properties
+*.keystore
+*.jks
+
+# ── iOS ─────────────────────────────────────
+ios/Pods/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/.symlinks/
+GoogleService-Info.plist
+
+# ── Firebase ────────────────────────────────
 *.ldb
 *.log
 .firebase/
@@ -6,3 +30,38 @@ firebase-debug.log
 .firebaserc
 shared_proto_db/
 window/
+google-services.json
+GoogleService-Info.plist
+
+# ── Backend ─────────────────────────────────
+node_modules/
+.env
+.env.local
+.env.production
+npm-debug.log*
+
+# ── Docker ──────────────────────────────────
+docker-compose.override.yml
+
+# ── MinIO storage ───────────────────────────
+minio_data/
+storage/
+data/
+
+# ── IDE ─────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+
+# ── OS ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ────────────────────────────────────
+logs/
+*.log
+
+# ── Zip files ───────────────────────────────
+*.zip
+*.tar.gz
