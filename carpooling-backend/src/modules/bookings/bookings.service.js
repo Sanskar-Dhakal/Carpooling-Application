@@ -3,7 +3,6 @@ const bcrypt = require('bcryptjs');
 const { sendPush } = require('../notifications/notification.service');
 const { creditPlatformFee, PLATFORM_FEE_RATE } = require('../payments/payments.service');
 const { delPattern, getPp, setPp } = require('../../config/redis');
-const { ensureWalletTransactionsSchema } = require('../../services/schema.service');
 // Inline cache buster — avoids circular dep (rides ↔ bookings)
 const invalidateRideSearchCache = () => delPattern('search:*');
 
@@ -513,26 +512,6 @@ const updateBookingStatus = async (driverId, bookingId, status) => {
       [status, finalPaymentStatus, bookingId],
     );
 
-    if (status === 'completed') {
-      await client.query(
-        `UPDATE rides
-         SET status = 'completed',
-             actual_end_time = COALESCE(actual_end_time, NOW()),
-             updated_at = NOW()
-         WHERE id = $1
-           AND status <> 'completed'`,
-        [row.ride_id],
-      );
-      await client.query(
-        `UPDATE bookings
-         SET status = 'completed',
-             updated_at = NOW()
-         WHERE ride_id = $1
-           AND status = 'confirmed'`,
-        [row.ride_id],
-      );
-    }
-
     if (finalPaymentStatus === 'settled') {
       const passengerWalletRes = await client.query('SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE', [row.passenger_id]);
       const passengerWallet = passengerWalletRes.rows[0];
@@ -547,10 +526,6 @@ const updateBookingStatus = async (driverId, bookingId, status) => {
         );
         await splitRideEarning(client, row.driver_id, row.total_amount, row.ride_id, 'wallet');
       }
-    }
-
-    if (status === 'completed') {
-      await settleWalletBookingsForRide(row.ride_id, client);
     }
 
     await client.query('COMMIT');
@@ -650,7 +625,6 @@ const submitQrPayment = async (passengerId, bookingId, screenshotUrl) => {
 };
 
 const confirmPaymentReceived = async (driverId, bookingId) => {
-  await ensureWalletTransactionsSchema();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

@@ -42,18 +42,6 @@ const ensureWalletTransactionsSchema = async () => {
           ADD COLUMN IF NOT EXISTS status VARCHAR(20)
       `);
       await pool.query(`
-        ALTER TABLE wallet_transactions
-          DROP CONSTRAINT IF EXISTS wallet_transactions_type_check
-      `);
-      await pool.query(`
-        ALTER TABLE wallet_transactions
-          ADD CONSTRAINT wallet_transactions_type_check
-          CHECK (type IN (
-            'credit','debit','reserve','release',
-            'withdrawal_request','withdrawal_paid','cash_receipt'
-          ))
-      `);
-      await pool.query(`
         UPDATE wallet_transactions
         SET status = CASE WHEN type = 'withdrawal_request' THEN 'pending' ELSE 'completed' END
         WHERE status IS NULL

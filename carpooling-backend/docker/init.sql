@@ -268,7 +268,6 @@ CREATE INDEX IF NOT EXISTS idx_gps_user_id ON gps_locations (user_id);
 -- ============================================================
 INSERT INTO users (name, email, password_hash, role, is_verified)
 VALUES (
-  
   'Super Admin',
   'admin@vroomsquad.com',
   '$2a$12$8.h2lncM/0iieCtFFAFmseQxMDlMqmM4mmCLyHgaWL3OdRJJim/OW',
