@@ -1,0 +1,8 @@
+# Firebase local files
+*.ldb
+*.log
+.firebase/
+firebase-debug.log
+.firebaserc
+shared_proto_db/
+window/
